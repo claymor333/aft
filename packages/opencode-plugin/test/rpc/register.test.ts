@@ -182,6 +182,27 @@ describe("registerAftRpc", () => {
     await warm.dispose();
   });
 
+  test("returns the verified OpenCode 2 session directory for client redirect", async () => {
+    const host = hostHarness();
+    const context: AftRpcContext = {
+      ...host.context,
+      location: { directory: "/launch" },
+      session: {
+        get: ({ sessionID }) => Effect.succeed({ id: sessionID, directory: "/real/project" }),
+      },
+    };
+    const registered = await Effect.runPromise(
+      Effect.scoped(registerAftRpc(context, { directory: "/launch" }, poolHarness(null))),
+    );
+
+    expect(await host.getStatus()({ sessionID: "ses_redirect" })).toMatchObject({
+      success: true,
+      status: "not_initialized",
+      verified_directory: "/real/project",
+    });
+    await registered.dispose();
+  });
+
   test("threads RPC cancellation into an uncached status request", async () => {
     const bridge = new StatusBridge(statusSnapshot("ses_other"));
     const host = hostHarness();

@@ -179,6 +179,24 @@ describe("OpenCode V2 TUI setup", () => {
     cleanup();
   });
 
+  test("uses the active session tab when the palette is not on a session route", async () => {
+    const h = harness();
+    const ui = h.context.ui as any;
+    ui.router.current = () => ({ type: "home" });
+    ui.tabs = {
+      list: () => [{ sessionID: "ses_tui", active: true }],
+    };
+    const cleanup = await setupV2Tui(h.context as never);
+    const appClaim = h.claims.find(({ append }) => append === "app");
+    appClaim?.render({});
+    const layer = h.layers[0]!();
+
+    await (layer.commands[0]!.run as () => Promise<void>)();
+
+    expect(h.calls[0]?.input).toEqual({ sessionID: "ses_tui" });
+    cleanup();
+  });
+
   test("footer and sidebar refresh adapters consume typed invalidation and progress events", async () => {
     const h = harness();
     let refreshes = 0;

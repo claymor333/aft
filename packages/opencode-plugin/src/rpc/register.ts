@@ -11,6 +11,7 @@ import {
   registerStatusChangeSink,
 } from "../shared/rpc-notifications";
 import { NOT_STARTED_STATUS_TEXT } from "../shared/status";
+import { verifySessionDirectory } from "../shared/session-directory";
 import { type AftIndexProgress, AftRpc, type AftRpcSession } from "./contract";
 
 type RpcRegistration = {
@@ -24,6 +25,11 @@ type RpcRegistration = {
 };
 
 export type AftRpcContext = {
+  /** OpenCode 2's server context uses an Effect-based session domain. */
+  location?: { directory?: string };
+  session?: {
+    get(input: { sessionID: string }): Effect.Effect<{ directory?: string } | undefined, unknown>;
+  };
   rpc: {
     register(
       definition: typeof AftRpc,
@@ -111,11 +117,12 @@ function locationRoot(location: AftRpcLocation): string {
   return location.project?.canonical ?? location.project?.directory ?? location.directory;
 }
 
-function placeholderStatus(): Record<string, unknown> {
+function placeholderStatus(verifiedDirectory?: string): Record<string, unknown> {
   return {
     success: true,
     status: "not_initialized",
     cache_role: "not_initialized",
+    ...(verifiedDirectory ? { verified_directory: verifiedDirectory } : {}),
     message: NOT_STARTED_STATUS_TEXT,
   };
 }
@@ -162,28 +169,30 @@ export function registerAftRpc(
     };
 
     const getStatus = (input: AftRpcSession): Effect.Effect<Record<string, unknown>, unknown> =>
-      Effect.suspend(() => {
-        const sessionID = input.sessionID || "rpc";
-        const bridge = pool.getActiveBridgeForRoot(root);
-        if (!bridge) return Effect.succeed(placeholderStatus());
-        observeBridge(bridge);
+      Effect.tryPromise({
+        try: async (signal) => {
+          const sessionID = input.sessionID || "rpc";
+          const verifiedDirectory = input.sessionID
+            ? await verifySessionDirectory(context, input.sessionID)
+            : null;
+          const bridge = pool.getActiveBridgeForRoot(verifiedDirectory ?? root);
+          if (!bridge) return placeholderStatus(verifiedDirectory ?? undefined);
+          observeBridge(bridge);
 
-        const cached = bridge.getCachedStatus();
-        const cachedSessionID = cached ? sessionFromSnapshot(cached) : undefined;
-        if (cached && cachedSessionID === sessionID) {
-          return Effect.succeed({ success: true, ...cached });
-        }
-        return Effect.tryPromise({
-          try: (signal) =>
-            bridge.send("status", { session_id: sessionID }, { abortSignal: signal }),
-          catch: (error) => error,
-        }).pipe(
-          Effect.tap((response) =>
-            Effect.sync(() => {
-              if (response.success !== false) bridge.cacheStatusSnapshot(response);
-            }),
-          ),
-        );
+          const cached = bridge.getCachedStatus();
+          const cachedSessionID = cached ? sessionFromSnapshot(cached) : undefined;
+          if (cached && cachedSessionID === sessionID) {
+            return { success: true, ...cached };
+          }
+          const response = await bridge.send(
+            "status",
+            { session_id: sessionID },
+            { abortSignal: signal },
+          );
+          if (response.success !== false) bridge.cacheStatusSnapshot(response);
+          return response;
+        },
+        catch: (error) => error,
       });
 
     registration = yield* context.rpc.register(AftRpc, { getStatus });

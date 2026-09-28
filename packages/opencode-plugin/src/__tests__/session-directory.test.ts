@@ -205,6 +205,18 @@ describe("verifySessionDirectory (cross-project serve gate)", () => {
     expect(await verifySessionDirectory(client, "ses_v1")).toBe("/real/project");
   });
 
+  test("supports the OpenCode 2 Effect-based session domain", async () => {
+    const { Effect } = await import("effect");
+    const context = {
+      location: { directory: "/launch" },
+      session: {
+        get: ({ sessionID }: { sessionID: string }) =>
+          Effect.succeed({ id: sessionID, directory: "/real/project" }),
+      },
+    };
+    expect(await verifySessionDirectory(context, "ses_v2_context")).toBe("/real/project");
+  });
+
   test("returns null on SDK failure and does NOT memoize the failure", async () => {
     let calls = 0;
     const client = {

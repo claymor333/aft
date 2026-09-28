@@ -87,7 +87,13 @@ type V2TuiContext = {
   };
   ui: {
     dialog: { alert(input: { title: string; message: string }): Promise<void> };
-    router: { current(): { type: string; sessionID?: string } };
+    router: { current(): { type?: string; sessionID?: string; name?: string; params?: { sessionID?: string } } };
+    tabs?: {
+      list(): ReadonlyArray<{ sessionID: string; active: boolean }>;
+    };
+    panel?: {
+      current(): { sessionID: string } | undefined;
+    };
     slot(claim: {
       append: "app" | "prompt.footer.status" | "sidebar.content";
       render(input: { sessionID?: string }): unknown;
@@ -258,8 +264,30 @@ function SidebarStatus(props: { context: V2TuiContext; rpc: AftRpcClient; sessio
 }
 
 function activeSessionID(context: V2TuiContext): string | undefined {
-  const route = context.ui.router.current();
-  return route.type === "session" ? route.sessionID : undefined;
+  try {
+    const route = context.ui.router.current();
+    if (route?.type === "session" && route.sessionID) return route.sessionID;
+    // Older/alternate host route shapes use `name` + `params`.
+    if (route?.name === "session" && route.params?.sessionID) {
+      return route.params.sessionID;
+    }
+  } catch {
+    // Fall through to the tab/panel APIs when the route is unavailable while
+    // the command palette is mounted.
+  }
+
+  try {
+    const activeTab = context.ui.tabs?.list?.().find((tab) => tab.active);
+    if (activeTab?.sessionID) return activeTab.sessionID;
+  } catch {
+    // Some hosts expose tabs only after the session view has mounted.
+  }
+
+  try {
+    return context.ui.panel?.current?.()?.sessionID;
+  } catch {
+    return undefined;
+  }
 }
 
 async function showStatusDialog(

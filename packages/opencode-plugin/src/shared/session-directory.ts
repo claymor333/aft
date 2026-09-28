@@ -20,6 +20,7 @@
  * workaround makes AFT robust against the wrong cwd.
  */
 import { sessionWarn } from "../logger.js";
+import { Effect } from "effect";
 
 interface SessionInfo {
   directory?: string;
@@ -32,6 +33,15 @@ interface OpenCodeClientShape {
       query?: { directory?: string };
       throwOnError?: boolean;
     }) => Promise<{ data?: SessionInfo } | SessionInfo | undefined>;
+  };
+}
+
+/** OpenCode 2 server-plugin context. Unlike the V1 SDK client, its session
+ * domain returns an Effect and accepts `{ sessionID }`. */
+interface V2PluginContextShape {
+  location?: { directory?: string };
+  session?: {
+    get?: (input: { sessionID: string }) => Effect.Effect<SessionInfo | undefined, unknown>;
   };
 }
 
@@ -177,6 +187,27 @@ export async function verifySessionDirectory(
   if (!sessionId) return null;
   const hit = verifyCache.get(sessionId);
   if (hit && Date.now() - hit.verifiedAt < VERIFY_TTL_MS) return hit.directory;
+
+  const v2 = client as V2PluginContextShape;
+  if (
+    typeof v2?.location?.directory === "string" &&
+    typeof v2.session?.get === "function"
+  ) {
+    try {
+      const session = await Effect.runPromise(v2.session.get({ sessionID: sessionId }));
+      const directory =
+        session && typeof session.directory === "string" && session.directory.length > 0
+          ? session.directory
+          : null;
+      verifyCache.set(sessionId, { directory, verifiedAt: Date.now() });
+      if (directory !== null) setCache(sessionId, directory);
+      return directory;
+    } catch {
+      // Verification failure = do not serve cross-project data. Do NOT
+      // memoize failures; the next poll should retry.
+      return null;
+    }
+  }
 
   const c = client as OpenCodeClientShape;
   const sessionApi = c?.session;
