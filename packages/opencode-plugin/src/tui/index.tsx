@@ -52,12 +52,38 @@ function getRpcClient(directory: string): AftRpcClient {
 function getSessionId(api: TuiPluginApi): string | null {
   try {
     const route = api.route.current;
+    // OpenCode V2 exposes routes as { type, sessionID }, while the legacy
+    // TUI API exposes { name, params }. Keep both forms here because the
+    // hybrid entry can be mounted through either host surface.
+    if (route?.type === "session" && route.sessionID) {
+      return route.sessionID;
+    }
     if (route?.name === "session" && route.params?.sessionID) {
       return route.params.sessionID;
     }
   } catch {
     // ignore
   }
+
+  // The command palette can be mounted while the router is on the home route.
+  // In that state V2 still exposes the active session through tabs or panel.
+  // These properties are intentionally accessed through `apiAny`: they are
+  // not present in the legacy TuiPluginApi declaration.
+  try {
+    const apiAny = api as unknown as {
+      ui?: {
+        tabs?: { list?: () => Array<{ sessionID?: string; active?: boolean }> };
+        panel?: { current?: () => { sessionID?: string } | undefined };
+      };
+    };
+    const activeTab = apiAny.ui?.tabs?.list?.().find((tab) => tab.active);
+    if (activeTab?.sessionID) return activeTab.sessionID;
+    const panelSessionID = apiAny.ui?.panel?.current?.()?.sessionID;
+    if (panelSessionID) return panelSessionID;
+  } catch {
+    // ignore
+  }
+
   return null;
 }
 
